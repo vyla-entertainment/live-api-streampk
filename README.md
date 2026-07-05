@@ -1,14 +1,3 @@
----
-title: live-api
-emoji: 📺
-colorFrom: purple
-colorTo: pink
-sdk: docker
-pinned: false
-license: other
-app_file: server.js
----
-
 # [./DOCUMENTATION/](./DOCUMENTATION/)
 
 This project is developed and maintained by [Vyla Entertainment](https://github.com/vyla-entertainment) (@vyla-entertainment).
