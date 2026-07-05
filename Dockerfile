@@ -1,13 +1,12 @@
-FROM node:lts-alpine
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
 COPY package*.json ./
-
-RUN npm install --omit=dev
-
+RUN npm install --production
 COPY . .
 
 EXPOSE 7860
-
-CMD ["node", "server.js"]
+ENV PORT=7860
+CMD ["npm", "start"]

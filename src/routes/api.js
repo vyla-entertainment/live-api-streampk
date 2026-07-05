@@ -1,103 +1,108 @@
 const express = require('express');
-const { upstreamPost } = require('../upstreamClient');
-const { shapeChannel } = require('../utils');
+const { upstreamGet, upstreamPipe } = require('../upstreamClient');
+const { getManifestUrl, proxyPlaylist, proxySegment } = require('../streamProxy');
+const { shapeCard } = require('../utils');
 
 const router = express.Router();
 
 router.get('/', (req, res) => {
     res.json({
         name: 'live-api',
-        description: 'Live IPTV aggregator',
-        endpoints: [
-            '/api/countries',
-            '/api/channels',
-            '/api/channels/:country',
-            '/api/stream/:id'
-        ]
+        description: 'Live sports aggregator',
+        endpoints: {
+            sports: "/api/sports",
+            matches_by_category: "/api/matches/:category",
+            popular_matches: "/api/matches/:category/popular",
+            stream_resolver: "/api/stream/:source/:id",
+            proxy_m3u8: "/api/m3u8-proxy?url={url}",
+            images: [
+                "/api/images/badge/:badge",
+                "/api/images/poster/:badge1/:badge2",
+                "/api/images/proxy/:url"
+            ]
+        }
     });
 });
 
-router.get('/countries', async (req, res) => {
+router.get('/sports', async (req, res) => {
     try {
-        const data = await upstreamPost('/mediaurl-catalog.json', {
-            catalogId: 'iptv',
-            id: '',
-            adult: false,
-            search: '',
-            sort: 'trending-region',
-            filter: {},
-            cursor: null
-        });
-        
-        const groupFilter = data.features?.filter?.find(f => f.id === 'group');
-        const countries = groupFilter ? groupFilter.values : [];
-        res.json(countries);
+        const data = await upstreamGet('/sports');
+        res.json(data);
     } catch (e) {
         res.status(e.status || 502).json({ error: e.message });
     }
 });
 
-router.get('/channels', async (req, res) => {
+router.get('/matches/:category', async (req, res) => {
     try {
-        const cursor = req.query.cursor ? parseInt(req.query.cursor, 10) : null;
-        const data = await upstreamPost('/mediaurl-catalog.json', {
-            catalogId: 'iptv',
-            id: '',
-            adult: false,
-            search: '',
-            sort: 'trending-region',
-            filter: {},
-            cursor: cursor
-        });
-        
-        res.json({
-            channels: (data.items || []).map(shapeChannel),
-            nextCursor: data.nextCursor || null
-        });
+        const data = await upstreamGet(`/matches/${req.params.category}`);
+        res.json(data.map(shapeCard));
     } catch (e) {
         res.status(e.status || 502).json({ error: e.message });
     }
 });
 
-router.get('/channels/:country', async (req, res) => {
+router.get('/matches/:category/popular', async (req, res) => {
     try {
-        const cursor = req.query.cursor ? parseInt(req.query.cursor, 10) : null;
-        const data = await upstreamPost('/mediaurl-catalog.json', {
-            catalogId: 'iptv',
-            id: '',
-            adult: false,
-            search: '',
-            sort: 'trending-region',
-            filter: { group: req.params.country },
-            cursor: cursor
-        });
-        
-        res.json({
-            channels: (data.items || []).map(shapeChannel),
-            nextCursor: data.nextCursor || null
-        });
+        const data = await upstreamGet(`/matches/${req.params.category}/popular`);
+        res.json(data.map(shapeCard));
     } catch (e) {
         res.status(e.status || 502).json({ error: e.message });
     }
 });
 
-router.get('/stream/:id', async (req, res) => {
+router.get('/stream/:source/:id', async (req, res) => {
     try {
-        const playUrl = `https://huhu.to/huhu-iptv/play/${req.params.id}`;
-        const data = await upstreamPost('/mediaurl-resolve.json', { url: playUrl });
-        
-        const streams = (Array.isArray(data) ? data : [data]).map(stream => {
+        const data = await upstreamGet(`/stream/${req.params.source}/${req.params.id}`);
+        const proxyBase = `${req.protocol}://${req.get('host')}/api/m3u8-proxy`;
+
+        const enriched = await Promise.all(data.map(async (item) => {
+            const manifestObj = await getManifestUrl(item.source, item.id, item.streamNo);
+
+            let streamUrl = null;
+            if (manifestObj && manifestObj.url) {
+                streamUrl = `${proxyBase}?url=${encodeURIComponent(manifestObj.url)}`;
+                if (manifestObj.referer) {
+                    streamUrl += `&referer=${encodeURIComponent(manifestObj.referer)}`;
+                }
+            }
+
             return {
-                id: stream.name || stream.id,
-                name: stream.name || stream.id,
-                url: stream.url
+                id: item.id,
+                streamNo: item.streamNo,
+                language: item.language,
+                hd: item.hd,
+                streamUrl: streamUrl,
+                source: item.source,
+                viewers: item.viewers
             };
-        });
-        
-        res.json(streams);
+        }));
+
+        res.json(enriched);
     } catch (e) {
         res.status(502).json({ error: e.message });
     }
+});
+
+router.get('/m3u8-proxy', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).end();
+    if (url.includes('.ts') || url.includes('.m4s') || url.includes('.mp4') || url.includes('.key')) {
+        return proxySegment(req, res);
+    }
+    return proxyPlaylist(req, res);
+});
+
+router.get('/images/badge/:badge', async (req, res) => {
+    upstreamPipe(`/images/badge/${req.params.badge}`, res);
+});
+
+router.get('/images/poster/:badge1/:badge2', async (req, res) => {
+    upstreamPipe(`/images/poster/${req.params.badge1}/${req.params.badge2}`, res);
+});
+
+router.get(/^\/images\/proxy\/(.+)$/, async (req, res) => {
+    upstreamPipe(`/images/proxy/${req.params[0]}`, res);
 });
 
 module.exports = router;

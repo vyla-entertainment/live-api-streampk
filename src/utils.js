@@ -1,70 +1,9 @@
-const fetch = require('node-fetch');
+const { UPSTREAM } = require('./config');
 
-let logoMap = new Map();
-
-function cleanChannelName(name) {
-    if (!name) return '';
-    return name
-        .replace(/\s*\|.*$/, '')
-        .replace(/\[.*?\]/g, '')
-        .replace(/\(.*?\)/g, '')
-        .replace(/\b(HD\+|HD|FHD|UHD|4K|RAW|TV|TR:)\b/gi, '')
-        .replace(/[^a-zA-Z0-9]/g, '')
-        .toLowerCase();
+function badgeUrl(badge) {
+    if (!badge) return null;
+    return `${UPSTREAM}/images/badge/${badge}.webp`;
 }
-
-function cleanChannelNameKeepTv(name) {
-    if (!name) return '';
-    return name
-        .replace(/\s*\|.*$/, '')
-        .replace(/\[.*?\]/g, '')
-        .replace(/\(.*?\)/g, '')
-        .replace(/\b(HD\+|HD|FHD|UHD|4K|RAW|TR:)\b/gi, '')
-        .replace(/[^a-zA-Z0-9]/g, '')
-        .toLowerCase();
-}
-
-async function loadIptvOrgData() {
-    try {
-        const [channelsRes, logosRes] = await Promise.all([
-            fetch('https://iptv-org.github.io/api/channels.json').then(r => r.json()),
-            fetch('https://iptv-org.github.io/api/logos.json').then(r => r.json())
-        ]);
-
-        const bestLogos = new Map();
-        for (const logo of logosRes) {
-            if (!bestLogos.has(logo.channel)) {
-                bestLogos.set(logo.channel, logo.url);
-            }
-        }
-
-        const newLogoMap = new Map();
-        for (const ch of channelsRes) {
-            const logoUrl = bestLogos.get(ch.id);
-            if (logoUrl) {
-                const clean = cleanChannelName(ch.name);
-                if (clean) newLogoMap.set(clean, logoUrl);
-
-                const cleanKeepTv = cleanChannelNameKeepTv(ch.name);
-                if (cleanKeepTv) newLogoMap.set(cleanKeepTv, logoUrl);
-
-                if (Array.isArray(ch.alt_names)) {
-                    for (const alt of ch.alt_names) {
-                        const cleanAlt = cleanChannelName(alt);
-                        if (cleanAlt) newLogoMap.set(cleanAlt, logoUrl);
-
-                        const cleanAltKeepTv = cleanChannelNameKeepTv(alt);
-                        if (cleanAltKeepTv) newLogoMap.set(cleanAltKeepTv, logoUrl);
-                    }
-                }
-            }
-        }
-        logoMap = newLogoMap;
-    } catch (e) { }
-}
-
-loadIptvOrgData();
-setInterval(loadIptvOrgData, 24 * 60 * 60 * 1000);
 
 function toSlug(str) {
     return String(str)
@@ -74,31 +13,66 @@ function toSlug(str) {
         .replace(/(^-|-$)/g, '');
 }
 
-function getIptvOrgLogo(name) {
-    const clean = cleanChannelName(name);
-    if (logoMap.has(clean)) return logoMap.get(clean);
+function shapeCard(match) {
+    const home = match.teams?.home;
+    const away = match.teams?.away;
+    const [rawHome, rawAway] = String(match.title || '').split(/ vs\.? /i);
 
-    const cleanKeepTv = cleanChannelNameKeepTv(name);
-    if (logoMap.has(cleanKeepTv)) return logoMap.get(cleanKeepTv);
-
-    return null;
-}
-
-function shapeChannel(item) {
-    const id = item.ids?.id || null;
-    const name = item.name || 'Unknown';
-    const iptvLogo = getIptvOrgLogo(name);
+    const homeName = home?.name || rawHome?.trim() || 'TBD';
+    const awayName = away?.name || rawAway?.trim() || 'TBD';
 
     return {
-        id: id,
-        name: name,
-        country: item.group || 'Unknown',
-        logo: iptvLogo || null,
-        slug: `${toSlug(name)}-${id}`,
+        id: match.id,
+        title: match.title,
+        category: match.category,
+        date: match.date ?? null,
+        popular: !!match.popular,
+        live: true,
+        slug: `${toSlug(match.title)}-${match.id}`,
+        teams: {
+            home: {
+                name: homeName,
+                badge: badgeUrl(home?.badge)
+            },
+            away: {
+                name: awayName,
+                badge: badgeUrl(away?.badge)
+            }
+        },
+        poster: match.poster ? `${UPSTREAM}/images/proxy/${match.poster}.webp` : null,
+        sources: (match.sources || []).map(s => ({ source: s.source, id: s.id })),
         links: {
-            stream: `/api/stream/${id}`
+            self: `/api/${toSlug(match.category)}/${match.id}`,
+            streams: (match.sources || []).map(s => `/api/stream/${s.source}/${s.id}`)
         }
     };
 }
 
-module.exports = { toSlug, shapeChannel };
+function absUri(uri, base) {
+  return uri.startsWith('http') ? uri : new URL(uri, base).href;
+}
+
+function rewriteM3U8(text, baseUrl, proxyBase) {
+  const lines = text.split('\n');
+  const rewritten = lines.map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return line;
+
+    if (trimmed.startsWith('#')) {
+      if (trimmed.includes('URI="')) {
+        return trimmed.replace(/URI="([^"]+)"/g, (_, uri) => {
+          const absolute = absUri(uri, baseUrl);
+          return `URI="${proxyBase}${encodeURIComponent(absolute)}"`;
+        });
+      }
+      return line;
+    }
+
+    const absolute = absUri(trimmed, baseUrl);
+    return `${proxyBase}${encodeURIComponent(absolute)}`;
+  });
+
+  return rewritten.join('\n');
+}
+
+module.exports = { badgeUrl, toSlug, shapeCard, rewriteM3U8 };

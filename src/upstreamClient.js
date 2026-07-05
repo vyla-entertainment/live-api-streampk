@@ -3,9 +3,8 @@ const { UPSTREAM, CACHE_TTL, UPSTREAM_TIMEOUT } = require('./config');
 
 const cache = new Map();
 
-async function upstreamPost(pathname, body) {
-    const cacheKey = pathname + JSON.stringify(body);
-    const cached = cache.get(cacheKey);
+async function upstreamGet(pathname) {
+    const cached = cache.get(pathname);
     if (cached && Date.now() - cached.time < CACHE_TTL) {
         return cached.data;
     }
@@ -15,14 +14,7 @@ async function upstreamPost(pathname, body) {
 
     try {
         const res = await fetch(`${UPSTREAM}${pathname}`, {
-            method: 'POST',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
-                'Content-Type': 'application/json; charset=utf-8',
-                'Referer': `${UPSTREAM}/live`,
-                'Origin': UPSTREAM
-            },
-            body: JSON.stringify({ language: 'de', region: 'DE', ...body }),
+            headers: { 'User-Agent': 'live-api/1.0' },
             signal: controller.signal
         });
 
@@ -33,7 +25,7 @@ async function upstreamPost(pathname, body) {
         }
 
         const data = await res.json();
-        cache.set(cacheKey, { data, time: Date.now() });
+        cache.set(pathname, { data, time: Date.now() });
         return data;
     } catch (e) {
         if (e.name === 'AbortError') {
@@ -47,4 +39,20 @@ async function upstreamPost(pathname, body) {
     }
 }
 
-module.exports = { upstreamPost };
+async function upstreamPipe(pathname, res) {
+    try {
+        const response = await fetch(`${UPSTREAM}${pathname}`, {
+            headers: { 'User-Agent': 'live-api/1.0' },
+        });
+        if (!response.ok) {
+            return res.status(response.status).end();
+        }
+        res.set('Content-Type', response.headers.get('content-type'));
+        res.set('Cache-Control', 'public, max-age=86400');
+        response.body.pipe(res);
+    } catch (e) {
+        res.status(502).end();
+    }
+}
+
+module.exports = { upstreamGet, upstreamPipe };
