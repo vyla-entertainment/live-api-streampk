@@ -1,4 +1,4 @@
-const { readFileSync } = require('node:fs');
+const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { parentPort, workerData } = require('node:worker_threads');
@@ -8,7 +8,28 @@ const { EMBED_DOMAIN } = require('../../config');
 const vendorDir = join(__dirname, 'vendor');
 const wasmPath = join(vendorDir, 'lock.wasm');
 const lockModuleUrl = pathToFileURL(join(vendorDir, 'lock-esm.mjs')).href;
-const wasmBytes = readFileSync(wasmPath);
+
+const WASM_URL = 'https://github.com/sharoon7171/streamed-pk-hls-stream-resolver/raw/refs/heads/main/src/sources/goat/vendor/lock.wasm';
+
+async function downloadWasm() {
+    if (existsSync(wasmPath)) {
+        return readFileSync(wasmPath);
+    }
+
+    if (!existsSync(vendorDir)) {
+        mkdirSync(vendorDir, { recursive: true });
+    }
+
+    const response = await fetch(WASM_URL);
+    if (!response.ok) {
+        throw new Error(`Failed to download WASM: ${response.statusText}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    writeFileSync(wasmPath, buffer);
+    return buffer;
+}
+
+let wasmBytes;
 
 function pageUrl(slot) {
     return `${EMBED_DOMAIN}/embed/${slot.path}`;
@@ -152,6 +173,16 @@ async function crack(slot, goat, bodyHex) {
 }
 
 const { slot, goat, bodyHex } = workerData;
-crack(slot, goat, bodyHex)
-    .then((url) => parentPort.postMessage({ ok: true, url }))
-    .catch((err) => parentPort.postMessage({ ok: false, error: String(err.message || err) }));
+
+(async () => {
+    try {
+        if (!wasmBytes) {
+            wasmBytes = await downloadWasm();
+        }
+
+        const url = await crack(slot, goat, bodyHex);
+        parentPort.postMessage({ ok: true, url });
+    } catch (err) {
+        parentPort.postMessage({ ok: false, error: String(err.message || err) });
+    }
+})();
