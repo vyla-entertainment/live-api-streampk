@@ -19,7 +19,7 @@ npm install
 npm start
 ```
 
-Then open `http://localhost:3000` (or your deployed URL).
+Then open `http://localhost:5000` (or your deployed URL).
 
 ## Documentation
 

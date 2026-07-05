@@ -1,6 +1,6 @@
 # API Reference
 
-All endpoints are relative to the server root (e.g. `http://localhost:3000`).
+All endpoints are relative to the server root (e.g. `http://localhost:5000`).
 
 ---
 
@@ -25,7 +25,7 @@ GET /api/stream/admin/ppv-brooklyn-nets-vs-milwaukee-bucks
     "streamNo": 1,
     "language": "English - ESPN+",
     "hd": true,
-    "streamUrl": "http://localhost:3000/api/m3u8-proxy?url=https%3A%2F%2Flb14.strmd.st%2Fsecure%2F...%2Fplaylist.m3u8",
+    "streamUrl": "http://localhost:5000/api/m3u8-proxy?url=https%3A%2F%2Flb14.strmd.st%2Fsecure%2F...%2Fplaylist.m3u8",
     "source": "admin",
     "viewers": 14
   }
