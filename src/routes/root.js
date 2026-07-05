@@ -4,7 +4,10 @@ const path = require('path');
 
 const router = express.Router();
 
-const LOGO_TEXT = fs.readFileSync(path.join(__dirname, '../../public/assets/title.txt'), 'utf8');
+let LOGO_TEXT = '';
+try {
+    LOGO_TEXT = fs.readFileSync(path.join(__dirname, '../../public/assets/title.txt'), 'utf8');
+} catch (e) {}
 
 router.get('/', (req, res) => {
     res
