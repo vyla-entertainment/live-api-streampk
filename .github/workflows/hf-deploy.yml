@@ -12,28 +12,37 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Push to Hugging Face
+      - name: Deploy to HF Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -e
 
+          if [ -z "$HF_TOKEN" ]; then
+            echo "HF_TOKEN is missing"
+            exit 1
+          fi
+
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
 
-          echo "Cloning HF Space..."
-          git clone https://oauth2:$HF_TOKEN@huggingface.co/spaces/1c34/live-api hf-space
+          echo "Cloning Hugging Face Space..."
+          git clone https://hf:${HF_TOKEN}@huggingface.co/spaces/1c34/live-api hf-space
 
-          cd hf-space
-
-          echo "Syncing files via git (clean replace)..."
-
+          echo "Syncing files..."
           rsync -av \
             --delete \
             --exclude='.git' \
+            --exclude='.github' \
             --exclude='hf-space' \
-            ../ .
+            ./ hf-space/
 
+          cd hf-space
+
+          echo "Committing changes..."
           git add -A
-          git commit -m "deploy" --allow-empty
-          git push
+
+          git commit -m "deploy" || echo "No changes to commit"
+
+          echo "Pushing to Hugging Face..."
+          git push https://hf:${HF_TOKEN}@huggingface.co/spaces/1c34/live-api main
