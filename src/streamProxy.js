@@ -1,12 +1,13 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { EMBED_DOMAIN } = require('./config');
+const fetch = require('node-fetch');
 
 const { resolveGolf } = require('./resolvers/golf');
 const { resolveGoat } = require('./resolvers/goat');
 
 const exec = promisify(execFile);
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const UA = process.env.USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 const DEBUG = process.env.DEBUG === 'true';
 function debugLog(...args) {
@@ -53,30 +54,66 @@ async function curlPull(url, referer) {
     '-H', `Origin: ${new URL(referer).origin}`,
     '-H', `Accept: */*`,
     '-H', `Accept-Language: en-US,en;q=0.9`,
+    '-H', `Accept-Encoding: gzip, deflate, br`,
     '-H', `Connection: keep-alive`,
     '-H', `Sec-Fetch-Dest: empty`,
     '-H', `Sec-Fetch-Mode: cors`,
     '-H', `Sec-Fetch-Site: cross-site`,
+    '-H', `Sec-Ch-Ua: "Google Chrome";v="122", "Chromium";v="122", "Not.A/Brand";v="24"`,
+    '-H', `Sec-Ch-Ua-Mobile: ?0`,
+    '-H', `Sec-Ch-Ua-Platform: "Windows"`,
+    '-H', `DNT: 1`,
+    '--compressed',
+    '--retry', '3',
+    '--retry-delay', '2',
     '-o', '-',
     '-w', 'HTTPSTATUS:%{http_code}',
     url
   ];
 
-  const { stdout } = await exec('curl', args, { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
+  try {
+    const { stdout } = await exec('curl', args, { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
 
-  const mark = stdout.lastIndexOf(Buffer.from('HTTPSTATUS:'));
-  if (mark < 0) throw new Error('curl response parse failed');
+    const mark = stdout.lastIndexOf(Buffer.from('HTTPSTATUS:'));
+    if (mark < 0) throw new Error('curl response parse failed');
 
-  const body = stdout.subarray(0, mark);
-  const code = Number(stdout.subarray(mark + 11).toString('utf8'));
+    const body = stdout.subarray(0, mark);
+    const code = Number(stdout.subarray(mark + 11).toString('utf8'));
 
-  if (code < 200 || code >= 300) {
-    const err = new Error(`Upstream rejected with status ${code}`);
-    err.status = code;
-    throw err;
+    if (code < 200 || code >= 300) {
+      const err = new Error(`Upstream rejected with status ${code}`);
+      err.status = code;
+      throw err;
+    }
+
+    return body;
+  } catch (curlError) {
+    debugLog('curl failed, trying node-fetch fallback:', curlError.message);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        'Referer': referer,
+        'Origin': new URL(referer).origin,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'cross-site',
+        'DNT': '1'
+      }
+    });
+
+    if (!response.ok) {
+      const err = new Error(`Upstream rejected with status ${response.status}`);
+      err.status = response.status;
+      throw err;
+    }
+
+    const buffer = await response.buffer();
+    return buffer;
   }
-
-  return body;
 }
 
 async function getManifestUrl(source, id, streamNo) {
