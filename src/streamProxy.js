@@ -117,7 +117,7 @@ async function proxyPlaylist(req, res) {
     res.set('Access-Control-Allow-Origin', '*');
     res.send(rewritten);
   } catch (e) {
-    console.error('Playlist proxy error:', e.message);
+    console.error('Playlist error:', e.message);
     if (DEBUG) console.error(e.stack);
     res.status(e.status || 502).end();
   }
@@ -160,7 +160,7 @@ async function proxySegment(req, res) {
     res.set('Access-Control-Allow-Origin', '*');
     res.send(strippedBuffer);
   } catch (e) {
-    console.error('Segment proxy error:', e.message);
+    console.error('Segment error:', e.message);
     if (DEBUG) console.error(e.stack);
     res.status(e.status || 502).end();
   }
