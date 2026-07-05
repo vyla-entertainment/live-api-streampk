@@ -47,30 +47,35 @@ function rewriteM3U8(text, baseUrl, proxyBase) {
 
 async function curlPull(url, referer) {
   const args = [
-    '-sS', '-L', '--compressed',
+    '-sS', '-L',
     '-H', `User-Agent: ${UA}`,
     '-H', `Referer: ${referer}`,
     '-H', `Origin: ${new URL(referer).origin}`,
     '-H', `Accept: */*`,
+    '-H', `Accept-Language: en-US,en;q=0.9`,
+    '-H', `Connection: keep-alive`,
+    '-H', `Sec-Fetch-Dest: empty`,
+    '-H', `Sec-Fetch-Mode: cors`,
+    '-H', `Sec-Fetch-Site: cross-site`,
     '-o', '-',
     '-w', 'HTTPSTATUS:%{http_code}',
     url
   ];
 
   const { stdout } = await exec('curl', args, { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
-  
+
   const mark = stdout.lastIndexOf(Buffer.from('HTTPSTATUS:'));
   if (mark < 0) throw new Error('curl response parse failed');
-  
+
   const body = stdout.subarray(0, mark);
   const code = Number(stdout.subarray(mark + 11).toString('utf8'));
-  
+
   if (code < 200 || code >= 300) {
     const err = new Error(`Upstream rejected with status ${code}`);
     err.status = code;
     throw err;
   }
-  
+
   return body;
 }
 
@@ -100,10 +105,11 @@ async function proxyPlaylist(req, res) {
     const bodyBuffer = await curlPull(url, ref);
     const content = bodyBuffer.toString('utf8');
 
-    const baseUrl = url;
+    const urlObj = new URL(url);
+    const baseUrl = urlObj.href;
     const proxyBase = `${req.protocol}://${req.get('host')}/api/m3u8-proxy?`;
-    const proxyWithReferer = referer 
-      ? `${proxyBase}referer=${encodeURIComponent(referer)}&url=` 
+    const proxyWithReferer = referer
+      ? `${proxyBase}referer=${encodeURIComponent(referer)}&url=`
       : `${proxyBase}url=`;
 
     const rewritten = rewriteM3U8(content, baseUrl, proxyWithReferer);
@@ -115,6 +121,9 @@ async function proxyPlaylist(req, res) {
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl');
     res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.send(rewritten);
   } catch (e) {
     console.error('Playlist error:', e.message);
@@ -149,15 +158,24 @@ async function proxySegment(req, res) {
     const ref = referer || `${EMBED_DOMAIN}/`;
     debugLog(`Fetching segment: ${url} with referer ${ref}`);
     const buffer = await curlPull(url, ref);
-    
+
+    debugLog(`Segment buffer size: ${buffer.length}, first 10 bytes: ${buffer.subarray(0, 10).toString('hex')}`);
+
     const strippedBuffer = stripPng(buffer);
 
+    debugLog(`Stripped buffer size: ${strippedBuffer.length}, first 10 bytes: ${strippedBuffer.subarray(0, 10).toString('hex')}`);
+
     if (strippedBuffer.length < 188 || strippedBuffer[0] !== 0x47) {
+      debugLog('Invalid TS segment - first 200 chars:', buffer.toString('utf8', 0, 200));
       throw new Error('Invalid TS segment – missing sync byte');
     }
 
     res.set('Content-Type', 'video/mp2t');
     res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Accept-Ranges', 'bytes');
     res.send(strippedBuffer);
   } catch (e) {
     console.error('Segment error:', e.message);

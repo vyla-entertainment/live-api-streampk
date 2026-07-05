@@ -1,6 +1,7 @@
 const { encodeBody } = require('./proto');
 const { postFetch } = require('./fetch');
 const { unlock } = require('./lock');
+const { EMBED_DOMAIN } = require('../../config');
 
 async function resolveGoat(source, id, stream) {
     const slot = { source, id, stream: String(stream), path: `${source}/${id}/${stream}` };
@@ -8,7 +9,7 @@ async function resolveGoat(source, id, stream) {
     const m3u8 = await unlock(slot, goat, body);
     return {
         url: m3u8,
-        referer: null
+        referer: `${EMBED_DOMAIN}/embed/${slot.path}`
     };
 }
 
