@@ -4,7 +4,6 @@
 
 - **Node.js** ≥ 22 (ES modules support).
 - **curl** installed and available in `PATH` (required for proxying).
-- `lock.wasm` and `lock-esm.mjs` in `src/sources/goat/vendor/` (already included in the repo).
 
 ## Installation
 

@@ -1,33 +1,20 @@
-const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
-const { join } = require('node:path');
-const { pathToFileURL } = require('node:url');
 const { parentPort, workerData } = require('node:worker_threads');
 const { Window } = require('happy-dom');
 const { EMBED_DOMAIN } = require('../../config');
 
-const vendorDir = join(__dirname, 'vendor');
-const wasmPath = join(vendorDir, 'lock.wasm');
-const lockModuleUrl = pathToFileURL(join(vendorDir, 'lock-esm.mjs')).href;
-
 const WASM_URL = 'https://github.com/sharoon7171/streamed-pk-hls-stream-resolver/raw/refs/heads/main/src/sources/goat/vendor/lock.wasm';
 
-async function downloadWasm() {
-    if (existsSync(wasmPath)) {
-        return readFileSync(wasmPath);
-    }
-    if (!existsSync(vendorDir)) {
-        mkdirSync(vendorDir, { recursive: true });
-    }
+let wasmBytes = null;
+
+async function fetchWasm() {
+    if (wasmBytes) return wasmBytes;
     const response = await fetch(WASM_URL);
     if (!response.ok) {
-        throw new Error(`Failed to download WASM: ${response.statusText}`);
+        throw new Error(`Failed to fetch WASM: ${response.statusText}`);
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(wasmPath, buffer);
-    return buffer;
+    wasmBytes = Buffer.from(await response.arrayBuffer());
+    return wasmBytes;
 }
-
-let wasmBytes;
 
 function pageUrl(slot) {
     return `${EMBED_DOMAIN}/embed/${slot.path}`;
@@ -106,35 +93,13 @@ function mockFetch(NativeResponse, goat, body, onM3u8) {
     };
 }
 
-function patchImports(imports, NativeResponse, goat, body, onM3u8) {
-    const bg = imports?.['./locked_bg.js'];
-    if (!bg) return;
-    for (const key of Object.keys(bg)) {
-        if (!key.includes('instanceof')) continue;
-        const orig = bg[key];
-        bg[key] = (...args) => (orig(...args) ? 1 : 1);
-    }
-    const fetchKey = Object.keys(bg).find((k) => k.includes('fetch_e6e8e0'));
-    if (!fetchKey) return;
-    bg[fetchKey] = (_win, req) => {
-        const href = req?.url ?? '';
-        if (href.includes('/fetch')) {
-            return Promise.resolve(new NativeResponse(body, { status: 200, headers: { goat, 'Content-Type': 'application/octet-stream' } }));
-        }
-        if (href.includes('.m3u8')) {
-            onM3u8(href);
-            return Promise.resolve(new NativeResponse('#EXTM3U\n#EXT-X-VERSION:3\n', { status: 200, headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } }));
-        }
-        return Promise.reject(new Error(`unexpected wasm fetch ${href}`));
-    };
-}
-
 async function crack(slot, goat, bodyHex) {
     let m3u8 = null;
     const body = Buffer.from(bodyHex, 'hex');
     const NativeResponse = mountDom(slot);
     const fetchFn = mockFetch(NativeResponse, goat, body, (url) => { m3u8 = url; });
     globalThis.fetch = fetchFn;
+    const lockModuleUrl = new URL('./vendor/lock-esm.mjs', import.meta.url).href;
     const mod = await import(lockModuleUrl);
     const api = await mod.default({
         module_or_path: `${EMBED_DOMAIN}/js/wasm/lock.wasm`,
@@ -154,9 +119,7 @@ const { slot, goat, bodyHex } = workerData;
 
 (async () => {
     try {
-        if (!wasmBytes) {
-            wasmBytes = await downloadWasm();
-        }
+        await fetchWasm();
         const url = await crack(slot, goat, bodyHex);
         parentPort.postMessage({ ok: true, url });
     } catch (err) {

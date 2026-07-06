@@ -4,7 +4,7 @@ A Node.js server that resolves and proxies HLS streams from **streamed.pk / embe
 
 ## Features
 
-- Resolves `admin`/`echo` streams using the embed.st handshake (`lock.wasm`).
+- Resolves `admin`/`echo` streams using the embed.st handshake.
 - Resolves `golf` streams via a third‑party embed chain.
 - Proxies HLS playlists and segments with correct `Referer`/`Origin` headers.
 - Rewrites M3U8 playlists so all segments and keys go through the proxy.
