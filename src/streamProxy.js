@@ -102,8 +102,7 @@ async function curlPull(url, referer) {
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'cross-site',
         'DNT': '1'
-      },
-      timeout: 8000
+      }
     });
 
     if (!response.ok) {
@@ -130,47 +129,15 @@ async function getManifestUrl(source, id, streamNo) {
   }
 }
 
-function parseSlot(query) {
-  const embed = query.embed;
-  const embedOrigin = query.embedOrigin;
-  const referer = query.referer;
-
-  if (embed && embedOrigin) {
-    return {
-      origin: embedOrigin,
-      path: embed,
-      referer: `${embedOrigin}/embed/${embed}`
-    };
-  }
-
-  if (referer) {
-    try {
-      const url = new URL(referer);
-      const pathMatch = referer.match(/\/embed\/(.+)$/);
-      if (pathMatch) {
-        return {
-          origin: url.origin,
-          path: pathMatch[1],
-          referer: referer
-        };
-      }
-    } catch { }
-    return { referer };
-  }
-
-  return { referer: `${EMBED_DOMAIN}/` };
-}
-
 async function proxyPlaylist(req, res) {
-  try {
-    const slot = parseSlot(req.query);
-    const { url } = req.query;
-    if (!url) {
-      debugLog('Missing url parameter');
-      return res.status(400).end();
-    }
+  const { url, referer } = req.query;
+  if (!url) {
+    debugLog('Missing url parameter');
+    return res.status(400).end();
+  }
 
-    const ref = slot.referer || `${EMBED_DOMAIN}/`;
+  try {
+    const ref = referer || `${EMBED_DOMAIN}/`;
     debugLog(`Fetching playlist: ${url} with referer ${ref}`);
     const bodyBuffer = await curlPull(url, ref);
     const content = bodyBuffer.toString('utf8');
@@ -178,18 +145,11 @@ async function proxyPlaylist(req, res) {
     const urlObj = new URL(url);
     const baseUrl = urlObj.href;
     const proxyBase = `${req.protocol}://${req.get('host')}/api/m3u8-proxy?`;
+    const proxyWithReferer = referer
+      ? `${proxyBase}referer=${encodeURIComponent(referer)}&url=`
+      : `${proxyBase}url=`;
 
-    const params = new URLSearchParams();
-    if (slot.origin && slot.path) {
-      params.set('embed', slot.path);
-      params.set('embedOrigin', slot.origin);
-    } else if (req.query.referer) {
-      params.set('referer', req.query.referer);
-    }
-    const queryString = params.toString();
-    const proxyWithParams = queryString ? `${proxyBase}${queryString}&url=` : `${proxyBase}url=`;
-
-    const rewritten = rewriteM3U8(content, baseUrl, proxyWithParams);
+    const rewritten = rewriteM3U8(content, baseUrl, proxyWithReferer);
 
     if (DEBUG) {
       debugLog('Rewritten playlist (first 500 chars):');
@@ -225,15 +185,14 @@ function stripPng(buf) {
 }
 
 async function proxySegment(req, res) {
-  try {
-    const slot = parseSlot(req.query);
-    const { url } = req.query;
-    if (!url) {
-      debugLog('Missing url parameter for segment');
-      return res.status(400).end();
-    }
+  const { url, referer } = req.query;
+  if (!url) {
+    debugLog('Missing url parameter for segment');
+    return res.status(400).end();
+  }
 
-    const ref = slot.referer || `${EMBED_DOMAIN}/`;
+  try {
+    const ref = referer || `${EMBED_DOMAIN}/`;
     debugLog(`Fetching segment: ${url} with referer ${ref}`);
     const buffer = await curlPull(url, ref);
 
