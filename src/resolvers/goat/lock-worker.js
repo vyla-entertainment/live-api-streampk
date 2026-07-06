@@ -15,11 +15,9 @@ async function downloadWasm() {
     if (existsSync(wasmPath)) {
         return readFileSync(wasmPath);
     }
-
     if (!existsSync(vendorDir)) {
         mkdirSync(vendorDir, { recursive: true });
     }
-
     const response = await fetch(WASM_URL);
     if (!response.ok) {
         throw new Error(`Failed to download WASM: ${response.statusText}`);
@@ -39,7 +37,6 @@ function mountDom(slot) {
     const window = new Window({ url: pageUrl(slot) });
     const doc = window.document;
     doc.body.innerHTML = '<div id="player"></div>';
-
     const jwCfg = { file: null };
     const jwBase = {
         getContainer: () => doc.getElementById('player'),
@@ -47,11 +44,12 @@ function mountDom(slot) {
         load: (cfg) => { if (cfg?.file) jwCfg.file = cfg.file; },
         setConfig: (cfg) => { if (cfg?.file) jwCfg.file = cfg.file; },
         getConfig: () => jwCfg,
-        setup: () => { }, on: () => { }, play: () => { },
+        setup: () => { },
+        on: () => { },
+        play: () => { },
         getPlaylistItem: () => jwCfg,
         getPlaylist: () => (jwCfg.file ? [{ file: jwCfg.file }] : [])
     };
-
     window.__wasm_jw_player = new Proxy(jwBase, {
         get(target, prop, receiver) {
             if (Reflect.has(target, prop)) return Reflect.get(target, prop, receiver);
@@ -60,7 +58,6 @@ function mountDom(slot) {
         }
     });
     window.jwplayer = () => window.__wasm_jw_player;
-
     globalThis.window = window;
     globalThis.document = doc;
     globalThis.location = window.location;
@@ -69,12 +66,10 @@ function mountDom(slot) {
     globalThis.btoa = (s) => Buffer.from(s, 'binary').toString('base64');
     globalThis.TextDecoder = TextDecoder;
     globalThis.TextEncoder = TextEncoder;
-
     const NativeRequest = globalThis.Request;
     const NativeResponse = globalThis.Response;
     const NativeHeaders = globalThis.Headers;
     const NativeUrl = globalThis.URL;
-
     globalThis.URL = class extends NativeUrl {
         constructor(input, base) {
             if (input === '/fetch') input = `${EMBED_DOMAIN}/fetch`;
@@ -91,7 +86,6 @@ function mountDom(slot) {
     window.Request = globalThis.Request;
     window.Response = NativeResponse;
     window.Headers = NativeHeaders;
-
     return NativeResponse;
 }
 
@@ -122,7 +116,6 @@ function patchImports(imports, NativeResponse, goat, body, onM3u8) {
     }
     const fetchKey = Object.keys(bg).find((k) => k.includes('fetch_e6e8e0'));
     if (!fetchKey) return;
-
     bg[fetchKey] = (_win, req) => {
         const href = req?.url ?? '';
         if (href.includes('/fetch')) {
@@ -142,27 +135,12 @@ async function crack(slot, goat, bodyHex) {
     const NativeResponse = mountDom(slot);
     const fetchFn = mockFetch(NativeResponse, goat, body, (url) => { m3u8 = url; });
     globalThis.fetch = fetchFn;
-
-    const origInstantiate = WebAssembly.instantiate.bind(WebAssembly);
-    WebAssembly.instantiate = async (source, imports) => {
-        patchImports(imports, NativeResponse, goat, body, (url) => { m3u8 = url; });
-        if (!(source instanceof ArrayBuffer) && !ArrayBuffer.isView(source)) {
-            source = wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength);
-        }
-        return origInstantiate(source, imports);
-    };
-    WebAssembly.instantiateStreaming = async (_resp, imports) => WebAssembly.instantiate(wasmBytes, imports);
-
     const mod = await import(lockModuleUrl);
     const api = await mod.default({
         module_or_path: `${EMBED_DOMAIN}/js/wasm/lock.wasm`,
         fetch: fetchFn
     });
     await api.init_wasm?.();
-
-    WebAssembly.instantiate = origInstantiate;
-    delete WebAssembly.instantiateStreaming;
-
     try {
         await api.set_stream_jw(slot.source, slot.id, slot.stream);
     } catch (err) {
@@ -179,7 +157,6 @@ const { slot, goat, bodyHex } = workerData;
         if (!wasmBytes) {
             wasmBytes = await downloadWasm();
         }
-
         const url = await crack(slot, goat, bodyHex);
         parentPort.postMessage({ ok: true, url });
     } catch (err) {
