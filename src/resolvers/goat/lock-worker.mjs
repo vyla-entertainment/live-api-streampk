@@ -1,20 +1,14 @@
-const { parentPort, workerData } = require('node:worker_threads');
-const { Window } = require('happy-dom');
-const { EMBED_DOMAIN } = require('../../config');
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parentPort, workerData } from 'node:worker_threads';
+import { Window } from 'happy-dom';
+import { EMBED_DOMAIN } from '../../config.js';
 
-const WASM_URL = 'https://github.com/sharoon7171/streamed-pk-hls-stream-resolver/raw/refs/heads/main/src/sources/goat/vendor/lock.wasm';
-
-let wasmBytes = null;
-
-async function fetchWasm() {
-    if (wasmBytes) return wasmBytes;
-    const response = await fetch(WASM_URL);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch WASM: ${response.statusText}`);
-    }
-    wasmBytes = Buffer.from(await response.arrayBuffer());
-    return wasmBytes;
-}
+const vendorDir = join(dirname(fileURLToPath(import.meta.url)), 'vendor');
+const wasmPath = join(vendorDir, 'lock.wasm');
+const lockModuleUrl = pathToFileURL(join(vendorDir, 'lock-esm.mjs')).href;
+const wasmBytes = readFileSync(wasmPath);
 
 function pageUrl(slot) {
     return `${EMBED_DOMAIN}/embed/${slot.path}`;
@@ -24,6 +18,7 @@ function mountDom(slot) {
     const window = new Window({ url: pageUrl(slot) });
     const doc = window.document;
     doc.body.innerHTML = '<div id="player"></div>';
+
     const jwCfg = { file: null };
     const jwBase = {
         getContainer: () => doc.getElementById('player'),
@@ -45,18 +40,23 @@ function mountDom(slot) {
         }
     });
     window.jwplayer = () => window.__wasm_jw_player;
+
     globalThis.window = window;
     globalThis.document = doc;
     globalThis.location = window.location;
     globalThis.self = window;
+    globalThis.console = console;
+    window.console = console;
     globalThis.atob = (s) => Buffer.from(s, 'base64').toString('binary');
     globalThis.btoa = (s) => Buffer.from(s, 'binary').toString('base64');
     globalThis.TextDecoder = TextDecoder;
     globalThis.TextEncoder = TextEncoder;
+
     const NativeRequest = globalThis.Request;
     const NativeResponse = globalThis.Response;
     const NativeHeaders = globalThis.Headers;
     const NativeUrl = globalThis.URL;
+
     globalThis.URL = class extends NativeUrl {
         constructor(input, base) {
             if (input === '/fetch') input = `${EMBED_DOMAIN}/fetch`;
@@ -73,6 +73,7 @@ function mountDom(slot) {
     window.Request = globalThis.Request;
     window.Response = NativeResponse;
     window.Headers = NativeHeaders;
+
     return NativeResponse;
 }
 
@@ -93,19 +94,60 @@ function mockFetch(NativeResponse, goat, body, onM3u8) {
     };
 }
 
+function patchImports(imports, NativeResponse, goat, body, onM3u8) {
+    const bg = imports?.['./locked_bg.js'];
+    if (!bg) return;
+
+    for (const key of Object.keys(bg)) {
+        if (!key.includes('instanceof')) continue;
+        const orig = bg[key];
+        bg[key] = (...args) => (orig(...args) ? 1 : 1);
+    }
+
+    const fetchKey = Object.keys(bg).find((k) => k.includes('fetch_e6e8e0'));
+    if (!fetchKey) return;
+
+    bg[fetchKey] = (_win, req) => {
+        const href = req?.url ?? '';
+        if (href.includes('/fetch')) {
+            return Promise.resolve(new NativeResponse(body, { status: 200, headers: { goat, 'Content-Type': 'application/octet-stream' } }));
+        }
+        if (href.includes('.m3u8')) {
+            onM3u8(href);
+            return Promise.resolve(new NativeResponse('#EXTM3U\n#EXT-X-VERSION:3\n', { status: 200, headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } }));
+        }
+        return Promise.reject(new Error(`unexpected wasm fetch ${href}`));
+    };
+}
+
 async function crack(slot, goat, bodyHex) {
     let m3u8 = null;
     const body = Buffer.from(bodyHex, 'hex');
     const NativeResponse = mountDom(slot);
     const fetchFn = mockFetch(NativeResponse, goat, body, (url) => { m3u8 = url; });
     globalThis.fetch = fetchFn;
-    const lockModuleUrl = new URL('./vendor/lock-esm.mjs', import.meta.url).href;
+
+    const origInstantiate = WebAssembly.instantiate.bind(WebAssembly);
+
+    WebAssembly.instantiate = async (source, imports) => {
+        patchImports(imports, NativeResponse, goat, body, (url) => { m3u8 = url; });
+        if (!(source instanceof ArrayBuffer) && !ArrayBuffer.isView(source)) {
+            source = wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength);
+        }
+        return origInstantiate(source, imports);
+    };
+    WebAssembly.instantiateStreaming = async (_resp, imports) => WebAssembly.instantiate(wasmBytes, imports);
+
     const mod = await import(lockModuleUrl);
     const api = await mod.default({
         module_or_path: `${EMBED_DOMAIN}/js/wasm/lock.wasm`,
         fetch: fetchFn
     });
     await api.init_wasm?.();
+
+    WebAssembly.instantiate = origInstantiate;
+    delete WebAssembly.instantiateStreaming;
+
     try {
         await api.set_stream_jw(slot.source, slot.id, slot.stream);
     } catch (err) {
@@ -117,12 +159,6 @@ async function crack(slot, goat, bodyHex) {
 
 const { slot, goat, bodyHex } = workerData;
 
-(async () => {
-    try {
-        await fetchWasm();
-        const url = await crack(slot, goat, bodyHex);
-        parentPort.postMessage({ ok: true, url });
-    } catch (err) {
-        parentPort.postMessage({ ok: false, error: String(err.message || err) });
-    }
-})();
+crack(slot, goat, bodyHex)
+    .then((url) => parentPort.postMessage({ ok: true, url }))
+    .catch((err) => parentPort.postMessage({ ok: false, error: String(err.message || err) }));
