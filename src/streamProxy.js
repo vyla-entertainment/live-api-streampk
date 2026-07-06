@@ -71,8 +71,14 @@ async function curlPull(url, referer) {
     url
   ];
 
+  if (DEBUG) {
+    args.splice(1, 0, '-v');
+    debugLog('curl command:', 'curl', args.join(' '));
+  }
+
   try {
-    const { stdout } = await exec('curl', args, { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
+    const { stdout, stderr } = await exec('curl', args, { maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
+    if (DEBUG && stderr.length) debugLog('curl stderr:', stderr.toString('utf8'));
 
     const mark = stdout.lastIndexOf(Buffer.from('HTTPSTATUS:'));
     if (mark < 0) throw new Error('curl response parse failed');
@@ -80,39 +86,49 @@ async function curlPull(url, referer) {
     const body = stdout.subarray(0, mark);
     const code = Number(stdout.subarray(mark + 11).toString('utf8'));
 
+    debugLog(`curl response status: ${code}, body length: ${body.length}`);
+
     if (code < 200 || code >= 300) {
-      const err = new Error(`Upstream rejected with status ${code}`);
+      const snippet = body.toString('utf8', 0, Math.min(body.length, 500));
+      const err = new Error(`Upstream rejected with status ${code}: ${snippet}`);
       err.status = code;
+      err.body = body;
       throw err;
     }
 
     return body;
   } catch (curlError) {
     debugLog('curl failed, trying node-fetch fallback:', curlError.message);
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        'Referer': referer,
-        'Origin': new URL(referer).origin,
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'cross-site',
-        'DNT': '1'
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': UA,
+          'Referer': referer,
+          'Origin': new URL(referer).origin,
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'cross-site',
+          'DNT': '1'
+        }
+      });
+
+      if (!response.ok) {
+        const bodyText = await response.text();
+        const err = new Error(`Upstream rejected with status ${response.status}: ${bodyText.slice(0, 200)}`);
+        err.status = response.status;
+        throw err;
       }
-    });
 
-    if (!response.ok) {
-      const err = new Error(`Upstream rejected with status ${response.status}`);
-      err.status = response.status;
-      throw err;
+      const buffer = await response.buffer();
+      return buffer;
+    } catch (fetchError) {
+      debugLog('node-fetch also failed:', fetchError.message);
+      throw fetchError;
     }
-
-    const buffer = await response.buffer();
-    return buffer;
   }
 }
 
@@ -165,6 +181,9 @@ async function proxyPlaylist(req, res) {
   } catch (e) {
     console.error('Playlist error:', e.message);
     if (DEBUG) console.error(e.stack);
+    if (e.body && e.body.length) {
+      console.error('Response body snippet:', e.body.toString('utf8', 0, 500));
+    }
     res.status(e.status || 502).end();
   }
 }
@@ -217,6 +236,9 @@ async function proxySegment(req, res) {
   } catch (e) {
     console.error('Segment error:', e.message);
     if (DEBUG) console.error(e.stack);
+    if (e.body && e.body.length) {
+      console.error('Response body snippet:', e.body.toString('utf8', 0, 500));
+    }
     res.status(e.status || 502).end();
   }
 }

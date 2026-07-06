@@ -9,7 +9,7 @@ async function resolveGoat(source, id, stream) {
     const m3u8 = await unlock(slot, goat, body);
     return {
         url: m3u8,
-        referer: `${EMBED_DOMAIN}/embed/${slot.path}`
+        referer: `${EMBED_DOMAIN}/`
     };
 }
 
