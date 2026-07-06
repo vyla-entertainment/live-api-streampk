@@ -17,7 +17,7 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /var/www/live
+            cd /var/www/live-api-streampk
 
             git fetch origin main
             git reset --hard origin/main
@@ -25,9 +25,9 @@ jobs:
 
             npm install
 
-            chown -R www-data:www-data /var/www/live
-            chmod -R 755 /var/www/live
+            chown -R www-data:www-data /var/www/live-api-streampk
+            chmod -R 755 /var/www/live-api-streampk
 
-            pm2 restart live || pm2 start server.js --name live
+            pm2 restart live-api-streampk || pm2 start server.js --name live-api-streampk
 
             pm2 save
