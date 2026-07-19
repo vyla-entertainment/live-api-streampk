@@ -8,17 +8,17 @@
 ## Installation
 
 1. Clone the repository:
-   ```bash
+```bash
    git clone https://github.com/vyla-entertainment/live-api
    cd live-api
-   ```
+```
 
 2. Install dependencies:
-   ```bash
+```bash
    npm install
-   ```
+ ```
 
 3. Start the server:
-   ```bash
+```bash
    npm start
-   ```
+```

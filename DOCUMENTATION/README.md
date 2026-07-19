@@ -14,7 +14,7 @@ A Node.js server that resolves and proxies HLS streams from **streamed.pk / embe
 ## Quick Start
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/vyla-entertainment/live-api
 npm install
 npm start
 ```
